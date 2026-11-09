@@ -1,7 +1,7 @@
 # Day 1: token bucket
 
 ## What I built
-`TokenBucket` in `ratelimit/token_bucket.py`, 9 tests, and `demo.py`.
+`TokenBucket` in `ratelimit/token_bucket.py`, 12 test cases, and `demo.py`.
 
 ## Why a token bucket first
 It is the simplest algorithm that handles bursts properly, and most of the others are easier to explain next to it.
