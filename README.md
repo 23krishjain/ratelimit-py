@@ -9,7 +9,7 @@ An API that lets every client send unlimited requests falls over when one client
 Work in progress, one piece at a time.
 
 - [x] Token bucket
-- [ ] Sliding window
+- [x] Sliding window log
 - [ ] Storage interface so limiters can be shared across processes
 - [ ] Benchmark comparing the algorithms
 
@@ -20,7 +20,7 @@ python demo.py
 python -m pytest
 ```
 
-`demo.py` fires 12 requests at a bucket with a burst of 5 and a refill of 2 tokens per second. The first 5 pass, the rest are blocked, and after a one second wait another one passes.
+`demo.py` fires 12 requests at a bucket with a burst of 5 and a refill of 2 tokens per second. The first 5 pass, the rest are blocked, and after a one second wait another one passes. It then fires 7 requests at a sliding window of 5 per 2 seconds: 5 pass, 2 are blocked, and the oldest request ageing out frees a slot.
 
 ## Token bucket
 
@@ -39,10 +39,27 @@ else:
 Good for: allowing short bursts while capping the long-run average.
 Weak at: the burst. A client can use all `capacity` tokens at once.
 
+## Sliding window log
+
+Keeps the timestamp of every allowed request. A request passes if fewer than `limit` requests happened in the last `window` seconds.
+
+```python
+from ratelimit import SlidingWindowLog
+
+window = SlidingWindowLog(limit=100, window=60)   # 100 requests per minute
+if window.allow():
+    handle_request()
+else:
+    wait = window.retry_after()   # seconds until the oldest request ages out
+```
+
+Good for: exactness. No fixed-window boundary trick, where a client fires `limit` requests at the end of one window and `limit` more at the start of the next.
+Weak at: memory. It stores one timestamp per allowed request, so a limit of a million means a million entries.
+
 ## Limits
 
-- Not thread safe yet. Two threads calling `allow()` at the same time can both take the last token.
+- Not thread safe yet. Two threads calling `allow()` at the same time can both take the last slot.
 - State lives in memory in one process.
-- One bucket per client is up to the caller for now.
+- One limiter per client is up to the caller for now.
 
 Design notes for each step are in `docs/`.
