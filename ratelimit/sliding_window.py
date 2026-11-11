@@ -1,3 +1,4 @@
+import threading
 import time
 from collections import deque
 from typing import Callable
@@ -20,6 +21,7 @@ class SlidingWindowLog:
         self.window = float(window)
         self._clock = clock
         self._hits = deque()
+        self._lock = threading.Lock()
 
     def _drop_expired(self, now: float) -> None:
         # A hit exactly `window` seconds old counts as expired.
@@ -29,12 +31,13 @@ class SlidingWindowLog:
 
     def allow(self) -> bool:
         """Record one request if the window has room. Returns False without recording if not."""
-        now = self._clock()
-        self._drop_expired(now)
-        if len(self._hits) >= self.limit:
-            return False
-        self._hits.append(now)
-        return True
+        with self._lock:
+            now = self._clock()
+            self._drop_expired(now)
+            if len(self._hits) >= self.limit:
+                return False
+            self._hits.append(now)
+            return True
 
     def retry_after(self) -> float:
         """Seconds until the next request would pass (0 if one would pass now).
@@ -42,8 +45,9 @@ class SlidingWindowLog:
         The wait is set by the oldest hit in the window: once it expires,
         a slot frees up.
         """
-        now = self._clock()
-        self._drop_expired(now)
-        if len(self._hits) < self.limit:
-            return 0.0
-        return max(0.0, self._hits[0] + self.window - now)
+        with self._lock:
+            now = self._clock()
+            self._drop_expired(now)
+            if len(self._hits) < self.limit:
+                return 0.0
+            return max(0.0, self._hits[0] + self.window - now)

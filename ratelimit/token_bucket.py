@@ -1,3 +1,4 @@
+import threading
 import time
 from typing import Callable
 
@@ -18,6 +19,7 @@ class TokenBucket:
         self._clock = clock
         self._tokens = float(capacity)
         self._last = clock()
+        self._lock = threading.Lock()
 
     def _refill(self) -> None:
         now = self._clock()
@@ -31,16 +33,18 @@ class TokenBucket:
             raise ValueError("cost must be positive")
         if cost > self.capacity:
             return False  # can never be satisfied, so don't pretend it might be
-        self._refill()
-        if self._tokens >= cost:
-            self._tokens -= cost
-            return True
-        return False
+        with self._lock:
+            self._refill()
+            if self._tokens >= cost:
+                self._tokens -= cost
+                return True
+            return False
 
     def retry_after(self, cost: float = 1.0) -> float:
         """Seconds until `cost` tokens will be available (0 if available now)."""
         if cost > self.capacity:
             return float("inf")
-        self._refill()
-        missing = cost - self._tokens
-        return 0.0 if missing <= 0 else missing / self.rate
+        with self._lock:
+            self._refill()
+            missing = cost - self._tokens
+            return 0.0 if missing <= 0 else missing / self.rate
