@@ -10,6 +10,7 @@ Work in progress, one piece at a time.
 
 - [x] Token bucket
 - [x] Sliding window log
+- [x] Thread safety (one lock per limiter)
 - [ ] Storage interface so limiters can be shared across processes
 - [ ] Benchmark comparing the algorithms
 
@@ -58,7 +59,7 @@ Weak at: memory. It stores one timestamp per allowed request, so a limit of a mi
 
 ## Limits
 
-- Not thread safe yet. Two threads calling `allow()` at the same time can both take the last slot.
+- Thread safe within one process: each limiter has a lock. It does not help across processes or machines.
 - State lives in memory in one process.
 - One limiter per client is up to the caller for now.
 
