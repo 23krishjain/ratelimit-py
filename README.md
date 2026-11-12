@@ -11,7 +11,7 @@ Work in progress, one piece at a time.
 - [x] Token bucket
 - [x] Sliding window log
 - [x] Thread safety (one lock per limiter)
-- [ ] Storage interface so limiters can be shared across processes
+- [x] Storage interface (groundwork for sharing state; only an in-memory backend so far)
 - [ ] Benchmark comparing the algorithms
 
 ## Try it
@@ -57,10 +57,25 @@ else:
 Good for: exactness. No fixed-window boundary trick, where a client fires `limit` requests at the end of one window and `limit` more at the start of the next.
 Weak at: memory. It stores one timestamp per allowed request, so a limit of a million means a million entries.
 
+## Storage and per-client limits
+
+`KeyedTokenBucket` keeps one bucket per key (user id, API key, IP) and stores the state in a `Storage` object instead of on the limiter.
+
+```python
+from ratelimit import KeyedTokenBucket
+
+limiter = KeyedTokenBucket(capacity=5, rate=2)
+if limiter.allow("user-42"):
+    handle_request()
+```
+
+`Storage` has one method, `update(key, fn)`, which reads the state, runs `fn`, and writes the result as one atomic step. `MemoryStorage` is the only backend so far. A Redis backend would implement the same method, but it would need an atomic script on the Redis side, and that is not written. This step is groundwork: nothing here is shared across processes or servers yet.
+
 ## Limits
 
 - Thread safe within one process: each limiter has a lock. It does not help across processes or machines.
-- State lives in memory in one process.
+- The only storage backend is in memory, so state lives in one process. The interface is there; a shared backend is not.
+- Shared state across machines would also need a shared clock source. Each process's `time.monotonic` is its own.
 - One limiter per client is up to the caller for now.
 
 Design notes for each step are in `docs/`.
