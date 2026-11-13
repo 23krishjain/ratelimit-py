@@ -12,7 +12,7 @@ Work in progress, one piece at a time.
 - [x] Sliding window log
 - [x] Thread safety (one lock per limiter)
 - [x] Storage interface (groundwork for sharing state; only an in-memory backend so far)
-- [ ] Benchmark comparing the algorithms
+- [x] Benchmark comparing the algorithms (`python benchmark.py`)
 
 ## Try it
 
@@ -56,6 +56,18 @@ else:
 
 Good for: exactness. No fixed-window boundary trick, where a client fires `limit` requests at the end of one window and `limit` more at the start of the next.
 Weak at: memory. It stores one timestamp per allowed request, so a limit of a million means a million entries.
+
+## Benchmark
+
+`python benchmark.py` compares speed, memory and boundary behaviour. One run on my machine (numbers vary, read them as relative):
+
+| | token bucket | sliding window log |
+|---|---|---|
+| allow() calls per second, one thread | about 1.9 million | about 2.9 million |
+| memory after 100,000 allowed requests | about 316 bytes | about 3.2 MB |
+| 10 requests just before a window edge, 10 just after (limit 10 per 10s) | 10 of 20 allowed | 10 of 20 allowed |
+
+Takeaways: both are fast enough that speed is not the deciding factor. Memory is: the bucket holds two numbers, the log holds one timestamp per request. Both avoid the fixed-window problem, where the same pattern lets all 20 through. Speed is measured on the allowed path with an in-memory store, one thread, so it says nothing about a networked backend.
 
 ## Storage and per-client limits
 
