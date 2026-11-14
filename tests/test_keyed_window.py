@@ -86,13 +86,19 @@ def test_idle_keys_expire_with_ttl():
     assert len(storage) == 1
 
 
-def test_expired_key_starts_with_a_fresh_window():
+def test_ttl_shorter_than_window_is_rejected():
+    with pytest.raises(ValueError, match="recovery period"):
+        KeyedSlidingWindowLog(1, 100, MemoryStorage(ttl=60))
+
+
+def test_ttl_equal_to_window_is_safe_at_boundary():
     clock = FakeClock()
-    storage = MemoryStorage(ttl=60, clock=clock)
-    limiter = KeyedSlidingWindowLog(1, 100, storage, clock)
+    storage = MemoryStorage(ttl=10, clock=clock)
+    limiter = KeyedSlidingWindowLog(1, 10, storage, clock)
     assert limiter.allow("a")
-    assert not limiter.allow("a")  # hit is still inside the 100s window
-    clock.advance(61)  # past the ttl: the key, and its hit, are forgotten
+    clock.advance(9)
+    assert not limiter.allow("a")
+    clock.advance(10)
     assert limiter.allow("a")
 
 
@@ -127,3 +133,49 @@ def test_rejects_bad_config(limit, window):
 def test_rejects_bad_ttl():
     with pytest.raises(ValueError):
         MemoryStorage(ttl=0)
+
+
+def test_token_bucket_rejects_ttl_shorter_than_full_refill():
+    from ratelimit import KeyedTokenBucket
+    with pytest.raises(ValueError, match="recovery period"):
+        KeyedTokenBucket(10, 2, MemoryStorage(ttl=4))
+    KeyedTokenBucket(10, 2, MemoryStorage(ttl=5))
+
+
+@pytest.mark.parametrize("kind", ["window", "bucket"])
+def test_clock_is_sampled_inside_atomic_update(kind):
+    from ratelimit import KeyedTokenBucket, Storage
+
+    clock = FakeClock()
+
+    class DelayedStorage(Storage):
+        def __init__(self):
+            self.inner = MemoryStorage()
+
+        def update(self, key, fn):
+            # Simulate time spent waiting to enter a storage critical section.
+            clock.advance(1)
+            return self.inner.update(key, fn)
+
+    storage = DelayedStorage()
+    limiter = (KeyedSlidingWindowLog(1, 10, storage, clock) if kind == "window"
+               else KeyedTokenBucket(1, 0.1, storage, clock))
+    assert limiter.allow("a")  # recorded at t=1, not t=0
+    recorded = storage.inner.update("a", lambda state: (state, state))
+    assert (recorded[0] if kind == "window" else recorded[1]) == 1
+
+
+@pytest.mark.parametrize("cost", [0, -1])
+def test_keyed_bucket_retry_rejects_nonpositive_cost(cost):
+    from ratelimit import KeyedTokenBucket
+    with pytest.raises(ValueError):
+        KeyedTokenBucket(1, 1).retry_after("a", cost)
+
+
+def test_keyed_window_threads_share_one_limit():
+    from concurrent.futures import ThreadPoolExecutor
+    limiter = KeyedSlidingWindowLog(20, 10, clock=lambda: 0.0)
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(lambda _: limiter.allow("a"), range(200)))
+    assert sum(results) == 20
+    assert limiter.allow("b")

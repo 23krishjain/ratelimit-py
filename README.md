@@ -69,7 +69,7 @@ Weak at: memory. It stores one timestamp per allowed request, so a limit of a mi
 | memory after 100,000 allowed requests | about 316 bytes | about 3.2 MB |
 | 10 requests just before a window edge, 10 just after (limit 10 per 10s) | 10 of 20 allowed | 10 of 20 allowed |
 
-Takeaways: in this run the two were close on speed (both in the millions of calls per second), so this benchmark does not separate them on speed; under contention or a networked backend the picture could differ. The clear difference here is memory: the bucket holds two numbers, the log holds one timestamp per request. Both avoid the fixed-window problem, where the same pattern lets all 20 through. Speed is measured on the allowed path with an in-memory store, one thread, so it says nothing about a networked backend. The memory figures are Python allocations counted by `tracemalloc`, not total process memory.
+Takeaways: the log measured about 1.5 times the bucket throughput in this workload. Whether that matters depends on your workload; under contention or a networked backend the picture could differ. The clear difference here is memory: the bucket holds two numbers, the log holds one timestamp per request. Both avoid the fixed-window problem, where the same pattern lets all 20 through. Speed is measured on the allowed path with an in-memory store, one thread, so it says nothing about a networked backend. The memory figures are Python allocations counted by `tracemalloc`, not total process memory.
 
 ## Storage and per-client limits
 
@@ -96,9 +96,11 @@ limiter = KeyedSlidingWindowLog(limit=100, window=60)   # 100 requests per minut
 limiter.allow("user-42")
 ```
 
-Idle keys can expire: `MemoryStorage(ttl=3600)` forgets any key untouched for an hour, so a long-running process does not pile up one entry per client forever. Without a ttl, keys stay.
+Idle keys can expire: `MemoryStorage(ttl=3600)` forgets any key untouched for an hour, so a long-running process does not pile up one entry per client forever. Without a ttl, keys stay. Use a TTL at least as long as the window (sliding log) or `capacity / rate` (token bucket), or eviction could grant requests too early. These built-in limiters reject shorter MemoryStorage TTLs at construction. Do not change the TTL later. Use the same monotonic clock for limiter and store. Cleanup scans all stored keys on each update when TTL is enabled: O(number of keys), so it is not suitable for high-cardinality production traffic.
 
 ## Limits
+
+- Each storage instance/key namespace must be dedicated to compatible limiter configurations. Do not share keys between bucket and log limiters.
 
 - Thread safe within one process: each limiter has a lock. It does not help across processes or machines.
 - The only storage backend is in memory, so state lives in one process. The interface is there; a shared backend is not.

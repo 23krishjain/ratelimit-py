@@ -21,6 +21,9 @@ class KeyedTokenBucket:
         self.capacity = float(capacity)
         self.rate = float(rate)
         self.storage = storage if storage is not None else MemoryStorage()
+        if (isinstance(self.storage, MemoryStorage) and self.storage.ttl is not None
+                and self.storage.ttl < self.capacity / self.rate):
+            raise ValueError("storage ttl must cover the full limiter recovery period")
         self._clock = clock
 
     def _refilled(self, state, now):
@@ -35,9 +38,8 @@ class KeyedTokenBucket:
             raise ValueError("cost must be positive")
         if cost > self.capacity:
             return False
-        now = self._clock()
-
         def step(state):
+            now = self._clock()
             tokens, last = self._refilled(state, now)
             if tokens >= cost:
                 return (tokens - cost, last), True
@@ -46,11 +48,12 @@ class KeyedTokenBucket:
         return self.storage.update(key, step)
 
     def retry_after(self, key: Hashable, cost: float = 1.0) -> float:
+        if cost <= 0:
+            raise ValueError("cost must be positive")
         if cost > self.capacity:
             return float("inf")
-        now = self._clock()
-
         def step(state):
+            now = self._clock()
             tokens, last = self._refilled(state, now)
             missing = cost - tokens
             return (tokens, last), (0.0 if missing <= 0 else missing / self.rate)

@@ -13,8 +13,8 @@ class KeyedSlidingWindowLog:
     the limiter, so the state can be swapped for a shared backend.
 
     State per key is a list of timestamps, oldest first. A plain list,
-    not a deque, because a deque cannot be serialised for a networked
-    backend and a list can.
+    not a deque, because a list is directly JSON-serialisable; a deque needs
+    conversion first. This does not implement a networked backend.
     """
 
     def __init__(self, limit: int, window: float, storage: Storage = None,
@@ -26,6 +26,9 @@ class KeyedSlidingWindowLog:
         self.limit = int(limit)
         self.window = float(window)
         self.storage = storage if storage is not None else MemoryStorage()
+        if (isinstance(self.storage, MemoryStorage) and self.storage.ttl is not None
+                and self.storage.ttl < self.window):
+            raise ValueError("storage ttl must cover the full limiter recovery period")
         self._clock = clock
 
     def _unexpired(self, hits: Optional[List[float]], now: float) -> List[float]:
@@ -41,9 +44,8 @@ class KeyedSlidingWindowLog:
 
     def allow(self, key: Hashable) -> bool:
         """Record one request for this key if its window has room."""
-        now = self._clock()
-
         def step(state):
+            now = self._clock()
             hits = self._unexpired(state, now)
             if len(hits) >= self.limit:
                 return hits, False
@@ -53,9 +55,8 @@ class KeyedSlidingWindowLog:
 
     def retry_after(self, key: Hashable) -> float:
         """Seconds until this key's next request would pass (0 if one would pass now)."""
-        now = self._clock()
-
         def step(state):
+            now = self._clock()
             hits = self._unexpired(state, now)
             if len(hits) < self.limit:
                 return hits, 0.0

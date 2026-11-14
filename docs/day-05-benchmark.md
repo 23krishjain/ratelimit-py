@@ -9,7 +9,7 @@
 - **Boundary:** limit 10 per 10s, 10 requests just before the edge and 10 just after. A fixed-window counter lets all 20 through. Sliding log and token bucket both allow 10.
 
 ## Things worth explaining
-- **The sliding log was faster than the token bucket, which I did not expect.** My explanation is that the bucket does float arithmetic on every call and the log mostly does a comparison and a deque append when nothing has expired. I did not profile it, so treat that as a guess. In this single run they were close, so this benchmark does not separate them on speed. That is one machine, one thread, the allowed path only - not evidence that speed never matters.
+- **The sliding log was faster than the token bucket, which I did not expect.** My explanation is that the bucket does float arithmetic on every call and the log mostly does a comparison and a deque append when nothing has expired. I did not profile it, so treat that as a guess. The log measured about 1.5 times the bucket throughput in this workload. That is a measured difference, not evidence of equal performance. That is one machine, one thread, the allowed path only - not evidence that speed never matters.
 - **Memory is the clearer difference in this run.** That matches the design: counters versus a log. (The figures are `tracemalloc` Python allocations, not total process memory.)
 - **The keyed bucket is slower** because each call builds a closure and goes through `Storage.update` plus a lock. That cost buys a swappable backend.
 - **The fixed-window counter in the benchmark is a tiny reference, not a feature of the library.** It is there to show the problem the other two avoid.

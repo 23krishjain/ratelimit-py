@@ -1,22 +1,45 @@
-# Day 6: keyed sliding window, and forgetting idle keys
+# Day 6: keyed sliding window and idle-key expiry
 
-## What I built
-- `KeyedSlidingWindowLog`: the sliding window log with one window per key and state in a `Storage`, matching how `KeyedTokenBucket` works.
-- `MemoryStorage(ttl=...)`: keys untouched for longer than `ttl` seconds are forgotten. Without it, every key ever seen stayed in the dict forever - a real memory leak for a long-running process whose keys are user ids or IPs.
+## What changed
+- Added KeyedSlidingWindowLog, with allow(key) and retry_after(key).
+- Added opt-in MemoryStorage(ttl=...) with lazy idle-key cleanup.
+- Added tests for key isolation, boundary expiry, parity with the plain log,
+  shared storage, safe TTL configuration and clock sampling inside update.
+- Moved keyed limiter clock sampling inside the atomic callback to avoid
+  threads appending stale timestamps after newer ones.
+- Fixed nonpositive costs in KeyedTokenBucket.retry_after.
 
-## Decisions
-- **State per key is a plain list of timestamps, not a deque.** `SlidingWindowLog` uses a deque because it lives in memory. The keyed version's state goes through `Storage`, and a future networked backend has to serialise the state; a list serialises, a deque does not. The cost is O(n) pruning by slicing instead of popleft, which is fine at these sizes.
-- **Expiry is checked on access, not by a background thread or timer.** The store is a dict plus one lock; adding a sweeper thread would add a lifecycle to manage and a new way to break. The trade-off: a fully idle process holds its keys until the next call. For a rate limiter that is acceptable - memory only grows while traffic exists.
-- **ttl is opt-in.** The default stays "keep everything", so existing behaviour does not change under someone's feet.
-- **Touching any key triggers the sweep of all keys.** Simpler than tracking per-key deadlines in a heap, and the sweep is O(number of keys), same order of work the caller already pays per request in the common case.
+## Decisions and trade-offs
+State is a plain list of timestamps. It is directly JSON-serialisable, unlike
+an unconverted deque. That is a convenience, not a shared backend. Each update
+copies the list, so it costs O(hits in that key's window), even when blocking.
 
-## Known limits
-- Still one process. `MemoryStorage` is the only backend; nothing is shared across processes or machines.
-- Expiry is lazy (checked on access). Memory is reclaimed on the next call, not at the moment the ttl passes.
-- The sliding window log keeps one timestamp per allowed request per key, so memory is O(total requests inside the window across all keys). The ttl bounds the number of keys, not the hits per active key.
+TTL is opt-in. An expired key starts fresh. That is safe only after its limit
+has naturally recovered: a full window for the log, capacity/rate for a bucket.
+The built-in keyed limiters reject a shorter MemoryStorage TTL. Use the same
+monotonic clock for store and limiter, and do not change TTL after construction.
+A custom storage backend must preserve equivalent safety itself.
 
-## Questions to practise answering
-1. Why store the keyed window's hits as a list instead of a deque? (Serialisation for a future shared backend.)
-2. Why is expiry lazy? What breaks if the process is idle for an hour - and does anything break?
-3. A colleague says "just add a cleanup thread". What do you weigh before agreeing?
-4. What does ttl bound, and what does it not bound?
+Cleanup runs on each update under the storage lock. It scans all keys, costing
+O(number of keys), unlike the old O(1) dictionary update. This simple version
+is for small single-process use, not large client populations. There is no
+background thread: a fully idle process retains entries until the next call.
+TTL removes idle keys, but does not impose a hard capacity limit on active keys.
+
+## Review corrections
+The first passing suite allowed a TTL shorter than a live window. A review
+caught that this would reset the limit early; validation and regression tests
+now cover it. Passing the first suite did not prove correctness.
+
+## Limits
+Only MemoryStorage exists. Shared objects in one process are tested, not
+multiple processes or servers. Storage key namespaces must be dedicated to
+compatible limiter configurations; mixing bucket and log state is invalid.
+The clock must be monotonic. No high-cardinality performance claim is made.
+
+## Interview questions
+1. Why can evicting state too early bypass a limit?
+2. Why must clock sampling happen inside the atomic update?
+3. What does an O(number of keys) sweep cost on every request?
+4. When would a deque or an expiry heap be a better choice?
+5. Why do page-like data structures being serialisable not make a backend distributed?

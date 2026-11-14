@@ -46,7 +46,8 @@ class MemoryStorage(Storage):
                 self._drop_idle(now)
             new_state, result = fn(self._data.get(key))
             self._data[key] = new_state
-            self._touched[key] = now
+            if self.ttl is not None:
+                self._touched[key] = self._clock()
             return result
 
     def _drop_idle(self, now: float) -> None:
